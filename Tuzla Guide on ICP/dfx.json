@@ -1,0 +1,55 @@
+{
+  "canisters": {
+    "backend": {
+      "type": "motoko",
+      "main": "src/backend/main.mo",
+      "dependencies": ["internet_identity"]
+    },
+    "frontend": {
+      "type": "assets",
+      "dependencies": ["backend"],
+      "source": [
+        "dist/"
+      ],
+      "build": {
+        "args": "",
+        "command": "npm run build"
+      }
+    },
+    "internet_identity": {
+      "type": "custom",
+      "candid": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity.did",
+      "wasm": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity_dev.wasm.gz",
+      "remote": {
+        "candid": "internet_identity.did",
+        "id": {
+          "ic": "rdmx6-jaaaa-aaaah-qcadq-cai"
+        }
+      },
+      "frontend": {}
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": "mops sources"
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1,
+  "networks": {
+    "local": {
+      "bind": "127.0.0.1:8000",
+      "type": "ephemeral",
+      "replica": {
+        "subnet_type": "system"
+      }
+    },
+    "ic": {
+      "providers": [
+        "https://icp-api.io"
+      ],
+      "type": "persistent"
+    }
+  }
+}

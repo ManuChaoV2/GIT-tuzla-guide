@@ -1,0 +1,13 @@
+[package]
+name = "tuzla-guide-backend"
+version = "1.0.0"
+description = "Tuzla Guide backend canister"
+repository = "https://github.com/tuzla-guide/icp-app"
+keywords = ["icp", "motoko", "tourism", "tuzla"]
+
+[dependencies]
+base = "0.10.0"
+serde = "1.0.0"
+
+[dev-dependencies]
+test = "1.0.0"

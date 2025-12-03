@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Tuzla Guide - Decentralized Tourism App on Internet Computer" />
+    <meta name="keywords" content="Tuzla, Bosnia, Tourism, Travel, Guide, ICP, Blockchain, Crypto" />
+    <meta name="author" content="Tuzla Guide Team" />
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#0ea5e9" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Tuzla Guide" />
+    
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="Tuzla Guide - Decentralized Tourism App" />
+    <meta property="og:description" content="Discover Tuzla with our blockchain-powered tourism guide featuring offline maps, audio tours, and crypto payments." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://tuzla-guide.id.icp.coffee" />
+    
+    <!-- Twitter Card Meta Tags -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Tuzla Guide - Decentralized Tourism App" />
+    <meta name="twitter:description" content="Discover Tuzla with our blockchain-powered tourism guide featuring offline maps, audio tours, and crypto payments." />
+    
+    <title>Tuzla Guide - Decentralized Tourism on ICP</title>
+    
+    <!-- Preconnect to external services -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://api.mapbox.com" />
+    <link rel="preconnect" href="https://icp-api.io" />
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Lexend:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    
+    <!-- Manifest for PWA -->
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- Icons -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#0ea5e9" />
+    
+    <!-- Security Headers -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://icp-api.io https://api.mapbox.com https://events.mapbox.com; media-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self';" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- Service Worker Registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js')
+            .then(function(registration) {
+              console.log('ServiceWorker registration successful with scope: ', registration.scope);
+            }, function(err) {
+              console.log('ServiceWorker registration failed: ', err);
+            });
+        });
+      }
+    </script>
+  </body>
+</html>
