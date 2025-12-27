@@ -1,0 +1,5 @@
+# The whole SDK team owns the whole repo for now.
+* @dfinity/dx
+
+# Allows dfx-asset-sources.json to be updated without full approval (only CI).
+src/dfx/assets/dfx-asset-sources.json @ghost

@@ -1,0 +1,7 @@
+[
+    {
+        "op": "add",
+        "path": "/workspaces/-",
+        "value": "src/__backend_name__"
+    }
+]

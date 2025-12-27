@@ -1,0 +1,794 @@
+#!/usr/bin/env bats
+
+load ../utils/_
+
+setup() {
+  standard_setup
+
+  dfx identity new --storage-mode plaintext alice
+  echo "Alice principal: $(dfx identity get-principal --identity alice)"
+  dfx identity new --storage-mode plaintext bob
+  echo "Bob principal: $(dfx identity get-principal --identity bob)"
+}
+
+teardown() {
+  dfx_stop
+
+  standard_teardown
+}
+
+current_time_nanoseconds() {
+  echo "$(date +%s)"000000000
+}
+
+@test "balance without cycles ledger fails as expected" {
+  dfx_start
+
+  assert_command_fail dfx cycles balance
+  assert_contains "Cycles ledger with canister ID 'um5iw-rqaaa-aaaaq-qaaba-cai' is not installed."
+}
+
+@test "convert icp to cycles & balance" {
+  dfx_start --system-canisters
+
+  ALICE=$(dfx identity get-principal --identity alice)
+  ALICE_SUBACCT1="000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  ALICE_SUBACCT2="6C6B6A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
+  # Test failed to convert ICP to cycles without enough ICP.
+  assert_command_fail dfx cycles convert --amount 12.5 --identity alice
+  assert_contains "Insufficient ICP balance to finish the transfer transaction."
+
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE")"
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE" --subaccount "$ALICE_SUBACCT1")"
+
+  dfx identity use alice
+  assert_command dfx ledger balance
+  assert_eq "100.00000000 ICP"
+  assert_command dfx ledger balance --subaccount "$ALICE_SUBACCT1"
+  assert_eq "100.00000000 ICP"
+  assert_command dfx cycles balance --precise
+  assert_eq "0 cycles."
+
+  # base case
+  assert_command dfx cycles convert --amount 12.5
+  assert_contains "Account was topped up with 44_000_000_000_000 cycles!"
+  assert_command dfx ledger balance
+  assert_eq "87.49990000 ICP"
+  assert_command dfx cycles balance --precise
+  assert_eq "43999900000000 cycles."
+
+  # to-subaccount and from-subaccount
+  assert_command dfx cycles convert --amount 10 --from-subaccount "$ALICE_SUBACCT1" --to-subaccount "$ALICE_SUBACCT2"
+  assert_contains "Account was topped up with 35_200_000_000_000 cycles!"
+  assert_command dfx ledger balance --subaccount "$ALICE_SUBACCT1"
+  assert_eq "89.99990000 ICP"
+  assert_command dfx cycles balance --precise --subaccount "$ALICE_SUBACCT2"
+  assert_eq "35199900000000 cycles."
+
+  # deduplication
+  t=$(current_time_nanoseconds)
+  assert_command dfx cycles convert --amount 10 --created-at-time "$t"
+  assert_contains "Transfer sent at block height"
+  assert_command dfx cycles balance --precise
+  assert_eq "79199800000000 cycles."
+  # same created-at-time: dupe
+  assert_command dfx cycles convert --amount 10 --created-at-time "$t"
+  # shellcheck disable=SC2154
+  assert_contains "transaction is a duplicate of another transaction in block" "$stderr"
+  # shellcheck disable=SC2154
+  assert_contains "Transfer sent at block height"
+
+  # Check balances
+
+  ## --precise
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "79199800000000 cycles."
+
+  assert_command dfx cycles balance --precise --identity alice --subaccount "$ALICE_SUBACCT1"
+  assert_eq "0 cycles."
+
+  assert_command dfx cycles balance --precise --identity alice --subaccount "$ALICE_SUBACCT2"
+  assert_eq "35199900000000 cycles."
+
+  ## no --precise
+  assert_command dfx cycles balance --identity alice
+  assert_eq "79.200 TC (trillion cycles)."
+
+  assert_command dfx cycles balance --identity alice --subaccount "$ALICE_SUBACCT1"
+  assert_eq "0.000 TC (trillion cycles)."
+
+  assert_command dfx cycles balance --identity alice --subaccount "$ALICE_SUBACCT2"
+  assert_eq "35.200 TC (trillion cycles)."
+
+
+  # can see cycles balance of other accounts
+  assert_command dfx cycles balance --owner "$ALICE" --identity bob
+  assert_eq "79.200 TC (trillion cycles)."
+
+  assert_command dfx cycles balance --owner "$ALICE" --subaccount "$ALICE_SUBACCT2" --identity bob
+  assert_eq "35.200 TC (trillion cycles)."
+
+  assert_command dfx cycles balance --owner "$ALICE" --identity anonymous
+  assert_eq "79.200 TC (trillion cycles)."
+}
+
+@test "transfer" {
+  dfx_start --system-canisters
+
+  ALICE=$(dfx identity get-principal --identity alice)
+  ALICE_SUBACCT1="000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  ALICE_SUBACCT2="9C9B9A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  BOB=$(dfx identity get-principal --identity bob)
+  BOB_SUBACCT1="7C7B7A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
+  # Get some ICP in Alice's accounts
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE")"
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE" --subaccount "$ALICE_SUBACCT1")"
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE" --subaccount "$ALICE_SUBACCT2")"
+
+  # Get some cycles (converted from ICP) in Alice's accounts
+  assert_command dfx cycles convert --amount 10 --identity alice
+  assert_command dfx cycles convert --amount 10 --identity alice --from-subaccount "$ALICE_SUBACCT1" --to-subaccount "$ALICE_SUBACCT1"
+  assert_command dfx cycles convert --amount 10 --identity alice --from-subaccount "$ALICE_SUBACCT2" --to-subaccount "$ALICE_SUBACCT2"
+
+  # account to account
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199900000000 cycles."
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "0 cycles."
+
+  assert_command dfx cycles transfer "$BOB" 100000 --identity alice
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199799900000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "100000 cycles."
+
+  # account to subaccount
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199799900000 cycles."
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT1"
+  assert_eq "0 cycles."
+
+  assert_command dfx cycles transfer "$BOB" 100000 --identity alice --to-subaccount "$BOB_SUBACCT1"
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199699800000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT1"
+  assert_eq "100000 cycles."
+
+  # subaccount to account
+  assert_command dfx cycles balance --precise --identity alice --subaccount "$ALICE_SUBACCT2"
+  assert_eq "35199900000000 cycles."
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "100000 cycles."
+
+  assert_command dfx cycles transfer "$BOB" 700000 --identity alice --from-subaccount "$ALICE_SUBACCT2"
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity alice --subaccount "$ALICE_SUBACCT2"
+  assert_eq "35199799300000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "800000 cycles."
+
+
+  # subaccount to subaccount
+  assert_command dfx cycles balance --precise --identity alice --subaccount "$ALICE_SUBACCT2"
+  assert_eq "35199799300000 cycles."
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT1"
+  assert_eq "100000 cycles."
+
+  assert_command dfx cycles transfer "$BOB" 400000 --identity alice --to-subaccount "$BOB_SUBACCT1" --from-subaccount "$ALICE_SUBACCT2"
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity alice --subaccount "$ALICE_SUBACCT2"
+  assert_eq "35199698900000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT1"
+  assert_eq "500000 cycles."
+}
+
+@test "transfer deduplication" {
+  dfx_start --system-canisters
+
+  ALICE=$(dfx identity get-principal --identity alice)
+  BOB=$(dfx identity get-principal --identity bob)
+
+  # Get some ICP in Alice's accounts
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE")"
+  # Get some cycles (converted from ICP) in Alice's account
+  assert_command dfx cycles convert --amount 10 --identity alice
+
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199900000000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "0 cycles."
+
+  t=$(current_time_nanoseconds)
+
+  assert_command dfx cycles transfer "$BOB" 100000 --created-at-time "$t" --memo 1 --identity alice
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199799900000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "100000 cycles."
+
+  # same memo and created-at-time: dupe
+  assert_command dfx cycles transfer "$BOB" 100000 --created-at-time "$t" --memo 1 --identity alice
+  # shellcheck disable=SC2154
+  assert_contains "transaction is a duplicate of another transaction in block" "$stderr"
+  # shellcheck disable=SC2154
+  assert_contains "Transfer sent at block index" "$stdout"
+
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199799900000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "100000 cycles."
+
+  # different memo and same created-at-time same: not dupe
+  assert_command dfx cycles transfer "$BOB" 100000 --created-at-time "$t" --memo 2 --identity alice
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199699800000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "200000 cycles."
+
+  # same memo and different created-at-time same: not dupe
+  assert_command dfx cycles transfer "$BOB" 100000 --created-at-time $((t+1)) --memo 1 --identity alice
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199599700000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "300000 cycles."
+}
+
+@test "approve and transfer_from" {
+  dfx_start --system-canisters
+
+  ALICE=$(dfx identity get-principal --identity alice)
+  ALICE_SUBACCT1="000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  ALICE_SUBACCT2="9C9B9A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  BOB=$(dfx identity get-principal --identity bob)
+  BOB_SUBACCT1="7C7B7A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
+  # Get some ICP in Alice's accounts
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE")"
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE" --subaccount "$ALICE_SUBACCT1")"
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE" --subaccount "$ALICE_SUBACCT2")"
+
+  # Get some cycles (converted from ICP) in Alice's accounts
+  assert_command dfx cycles convert --amount 10 --identity alice
+  assert_command dfx cycles convert --amount 10 --identity alice --from-subaccount "$ALICE_SUBACCT1" --to-subaccount "$ALICE_SUBACCT1"
+  assert_command dfx cycles convert --amount 10 --identity alice --from-subaccount "$ALICE_SUBACCT2" --to-subaccount "$ALICE_SUBACCT2"
+
+  # account to account
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199900000000 cycles."
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "0 cycles."
+
+  t=$(current_time_nanoseconds)
+  assert_command dfx cycles approve "$BOB" 2000000000 --created-at-time "$t" --memo 123 --identity alice
+  assert_contains "Approval sent at block index"
+  assert_command dfx cycles approve "$BOB" 2000000000 --created-at-time "$t" --memo 123 --identity alice
+  assert_contains "Approval is a duplicate of block"
+  assert_command dfx cycles transfer "$BOB" 100000 --from "$ALICE" --identity bob
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199699900000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "100000 cycles."
+
+  # account to subaccount
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199699900000 cycles."
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT1"
+  assert_eq "0 cycles."
+
+  t=$(current_time_nanoseconds)
+  assert_command dfx cycles transfer "$BOB" 100000 --from "$ALICE" --to-subaccount "$BOB_SUBACCT1" --created-at-time "$t" --identity bob
+  assert_contains "Transfer sent at block index"
+  assert_command dfx cycles transfer "$BOB" 100000 --from "$ALICE" --to-subaccount "$BOB_SUBACCT1" --created-at-time "$t" --identity bob
+  assert_contains "Transfer is a duplicate of block index"
+
+  assert_command dfx cycles balance --precise --identity alice
+  assert_eq "35199599800000 cycles."
+
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT1"
+  assert_eq "100000 cycles."
+
+  # subaccount to account
+  assert_command dfx cycles balance --precise --identity alice --subaccount "$ALICE_SUBACCT1"
+  assert_eq "35199900000000 cycles."
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "100000 cycles."
+
+  assert_command dfx cycles approve "$BOB" 200000000000 --from-subaccount "$ALICE_SUBACCT1" --identity alice
+  assert_contains "Approval sent at block index"
+  assert_command dfx cycles transfer "$BOB" 700000 --from "$ALICE" --from-subaccount "$ALICE_SUBACCT1" --identity bob
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity alice --subaccount "$ALICE_SUBACCT1"
+  assert_eq "35199699300000 cycles."
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "800000 cycles."
+
+  # spender subaccount
+  assert_command dfx cycles balance --precise --identity alice --subaccount "$ALICE_SUBACCT2"
+  assert_eq "35199900000000 cycles."
+
+  assert_command dfx cycles approve "$BOB" 200000000000 --spender-subaccount "$BOB_SUBACCT1" --from-subaccount "$ALICE_SUBACCT2" --identity alice
+  assert_contains "Approval sent at block index"
+  assert_command dfx cycles transfer "$BOB" 300000 --from "$ALICE" --from-subaccount "$ALICE_SUBACCT2"  --spender-subaccount "$BOB_SUBACCT1" --identity bob
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity alice --subaccount "$ALICE_SUBACCT2"
+  assert_eq "35199699700000 cycles."
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "1100000 cycles."
+}
+
+@test "top-up canister principal check" {
+  dfx_start --system-canisters
+
+  BOB=$(dfx identity get-principal --identity bob)
+
+  assert_command_fail dfx cycles top-up "$BOB" 600000 --identity alice
+  assert_contains "Invalid receiver: $BOB.  Make sure the receiver is a canister."
+}
+
+@test "top-up and deposit-cycles" {
+  # Bootstrapping system canisters turns the pocket-ic auto_progress mode on.
+  # Canisters will consume cycles over time as they execute.
+  dfx_start --system-canisters
+
+  dfx_new
+
+  BOB=$(dfx identity get-principal --identity bob)
+  BOB_SUBACCT1="7C7B7A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  BOB_SUBACCT2="6C6B6A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
+  assert_command dfx canister create --all
+
+  # Get some ICP in Bob's accounts
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$BOB")"
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$BOB" --subaccount "$BOB_SUBACCT1")"
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$BOB" --subaccount "$BOB_SUBACCT2")"
+
+  # Get some cycles (converted from ICP) in Bob's accounts
+  assert_command dfx cycles convert --amount 10 --identity bob
+  assert_command dfx cycles convert --amount 10 --identity bob --from-subaccount "$BOB_SUBACCT1" --to-subaccount "$BOB_SUBACCT1"
+  assert_command dfx cycles convert --amount 10 --identity bob --from-subaccount "$BOB_SUBACCT2" --to-subaccount "$BOB_SUBACCT2"
+
+  # shellcheck disable=SC2030
+  export DFX_DISABLE_AUTO_WALLET=1
+
+  # account to canister
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "35199900000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 2_999" # 2_999x10^9
+
+  assert_command dfx cycles top-up e2e_project_backend 1000000000 --identity bob
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "35198800000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_000" # 3_000x10^9
+
+  assert_command dfx canister deposit-cycles 1000000000 e2e_project_backend --identity bob
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "35197700000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_001" # 3_001x10^9
+
+  # subaccount to canister
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT1"
+  assert_eq "35199900000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_001" # 3_001x10^9
+
+  assert_command dfx cycles top-up e2e_project_backend 1000000000 --identity bob --from-subaccount "$BOB_SUBACCT1"
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT1"
+  assert_eq "35198800000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_002" # 3_002x10^9
+
+  assert_command dfx canister deposit-cycles 1000000000 e2e_project_backend --identity bob --from-subaccount "$BOB_SUBACCT1"
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT1"
+  assert_eq "35197700000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_003" # 3_003x10^9
+
+  # subaccount to canister - by canister id
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT2"
+  assert_eq "35199900000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_003" # 3_003x10^9
+
+  assert_command dfx cycles top-up "$(dfx canister id e2e_project_backend)" 1000000000 --identity bob --from-subaccount "$BOB_SUBACCT2"
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT2"
+  assert_eq "35198800000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_004" # 3_004x10^9
+
+  assert_command dfx canister deposit-cycles 1000000000 "$(dfx canister id e2e_project_backend)" --identity bob --from-subaccount "$BOB_SUBACCT2"
+  assert_command dfx cycles balance --precise --identity bob --subaccount "$BOB_SUBACCT2"
+  assert_eq "35197700000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_005" # 3_005x10^9
+
+  # deduplication
+  t=$(current_time_nanoseconds)
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "35197700000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_005" # 3_005x10^9
+
+  assert_command dfx canister deposit-cycles 1000000000 e2e_project_backend --identity bob --created-at-time "$t"
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "35196600000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_006" # 3_006x10^9
+
+  assert_command dfx canister deposit-cycles 1000000000 e2e_project_backend --identity bob --created-at-time "$t"
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "35196600000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_006" # 3_006x10^9
+
+  # deposit-cycles --all skips remote canisters
+  jq '.canisters.remote.remote.id.local="rdmx6-jaaaa-aaaaa-aaadq-cai"' dfx.json | sponge dfx.json
+  assert_command dfx canister deposit-cycles 1000000000 --all --identity bob
+  assert_contains "Skipping canister 'remote' because it is remote for network 'local'"
+  assert_contains "Depositing 1000000000 cycles onto e2e_project_backend"
+  assert_not_contains "Depositing 1000000000 cycles onto remote"
+}
+
+@test "top-up deduplication" {
+  dfx_start --system-canisters
+
+  dfx_new
+
+  BOB=$(dfx identity get-principal --identity bob)
+  BOB_SUBACCT1="7C7B7A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  BOB_SUBACCT2="6C6B6A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
+  assert_command dfx canister create --all
+
+  # Get some ICP in Bob's accounts
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$BOB")"
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$BOB" --subaccount "$BOB_SUBACCT1")"
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$BOB" --subaccount "$BOB_SUBACCT2")"
+
+  # Get some cycles (converted from ICP) in Bob's accounts
+  assert_command dfx cycles convert --amount 10 --identity bob
+  assert_command dfx cycles convert --amount 10 --identity bob --from-subaccount "$BOB_SUBACCT1" --to-subaccount "$BOB_SUBACCT1"
+  assert_command dfx cycles convert --amount 10 --identity bob --from-subaccount "$BOB_SUBACCT2" --to-subaccount "$BOB_SUBACCT2"
+
+  # account to canister
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "35199900000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 2_999" # 2_999x10^9
+
+  t=$(current_time_nanoseconds)
+  assert_command dfx cycles top-up "$(dfx canister id e2e_project_backend)" --created-at-time "$t" 1000000000 --identity bob
+  assert_contains "Transfer sent at block index"
+
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "35198800000000 cycles."
+  assert_command dfx canister status e2e_project_backend
+  assert_contains "Balance: 3_000" # 3_000x10^9
+
+  # same created-at-time: dupe
+  assert_command dfx cycles top-up "$(dfx canister id e2e_project_backend)" --created-at-time "$t" 1000000000 --identity bob
+  # shellcheck disable=SC2154
+  assert_contains "transaction is a duplicate of another transaction in block" "$stderr"
+  # shellcheck disable=SC2154
+  assert_contains "Transfer sent at block index" "$stdout"
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "35198800000000 cycles."
+
+  # different created-at-time: not dupe
+  assert_command dfx cycles top-up "$(dfx canister id e2e_project_backend)" --created-at-time $((t+1)) 1000000000 --identity bob
+  assert_contains "Transfer sent at block index"
+  assert_command dfx cycles balance --precise --identity bob
+  assert_eq "35197700000000 cycles."
+}
+
+@test "canister creation" {
+  dfx_start --system-canisters
+  # shellcheck disable=SC2030,SC2031
+  export DFX_DISABLE_AUTO_WALLET=1
+  ALICE=$(dfx identity get-principal --identity alice)
+  ALICE_SUBACCT1="7C7B7A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
+  # Test canister creation failure before topping up cycles.
+  dfx_new canister_creation_failed
+
+  assert_command_fail dfx canister create canister_creation_failed_backend --with-cycles 1T --identity alice
+  assert_contains "Insufficient cycles balance to create the canister."
+  # shellcheck disable=SC2103
+  cd ..
+
+  # Get some ICP in Alice's accounts
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE")"
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE" --subaccount "$ALICE_SUBACCT1")"
+
+  # Get some cycles (converted from ICP) in Alice's accounts
+  assert_command dfx cycles convert --amount 10 --identity alice
+  assert_command dfx cycles convert --amount 10 --identity alice --from-subaccount "$ALICE_SUBACCT1" --to-subaccount "$ALICE_SUBACCT1"
+
+  # Setup done
+  dfx_new
+
+  # using dfx canister create
+  dfx identity use alice
+  t=$(current_time_nanoseconds)
+  assert_command dfx canister create e2e_project_backend --with-cycles 1T --created-at-time "$t"
+  assert_command dfx canister id e2e_project_backend
+  E2E_PROJECT_BACKEND_CANISTER_ID=$(dfx canister id e2e_project_backend)
+  assert_command dfx cycles balance --precise
+  assert_eq "34199800000000 cycles."
+  # forget about canister. If --created-at-time is a valid idempotency key we should end up with the same canister id
+  rm .dfx/local/canister_ids.json
+  assert_command dfx canister create e2e_project_backend --with-cycles 1T --created-at-time "$t"
+  assert_command dfx canister id e2e_project_backend
+  assert_contains "$E2E_PROJECT_BACKEND_CANISTER_ID"
+  assert_command dfx cycles balance --precise
+  assert_eq "34199800000000 cycles."
+  dfx canister stop e2e_project_backend
+  dfx canister delete e2e_project_backend --no-withdrawal
+
+  assert_command dfx canister create e2e_project_backend --with-cycles 1T --from-subaccount "$ALICE_SUBACCT1"
+  assert_command dfx canister id e2e_project_backend
+  assert_command dfx cycles balance --subaccount "$ALICE_SUBACCT1" --precise
+  assert_eq "34199800000000 cycles."
+  
+  # reset deployment status
+  rm -r .dfx
+
+  # using dfx deploy
+  t=$(current_time_nanoseconds)
+  assert_command dfx deploy e2e_project_backend --with-cycles 2T --created-at-time "$t"
+  assert_command dfx canister id e2e_project_backend
+  E2E_PROJECT_BACKEND_CANISTER_ID=$(dfx canister id e2e_project_backend)
+  assert_command dfx cycles balance --precise
+  assert_eq "32199700000000 cycles."
+  # reset and forget about canister. If --created-at-time is a valid idempotency key we should end up with the same canister id
+  dfx canister uninstall-code e2e_project_backend
+  rm .dfx/local/canister_ids.json
+  assert_command dfx deploy e2e_project_backend --with-cycles 2T --created-at-time "$t" -vv
+  assert_command dfx canister id e2e_project_backend
+  assert_contains "$E2E_PROJECT_BACKEND_CANISTER_ID"
+  assert_command dfx cycles balance --precise
+  assert_eq "32199700000000 cycles."
+  dfx canister stop e2e_project_backend
+  dfx canister delete e2e_project_backend --no-withdrawal
+  
+  assert_command dfx deploy e2e_project_backend --with-cycles 2T --from-subaccount "$ALICE_SUBACCT1"
+  assert_command dfx canister id e2e_project_backend
+  assert_command dfx cycles balance --subaccount "$ALICE_SUBACCT1" --precise
+  assert_eq "32199700000000 cycles."
+  dfx canister stop e2e_project_backend
+  dfx canister delete e2e_project_backend --no-withdrawal
+}
+
+@test "canister deletion" {
+  dfx_start --system-canisters
+  # shellcheck disable=SC2030,SC2031
+  export DFX_DISABLE_AUTO_WALLET=1
+  ALICE=$(dfx identity get-principal --identity alice)
+
+  # Get some ICP in Alice's account
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE")"
+  # Get some cycles (converted from ICP) in Alice's account
+  assert_command dfx cycles convert --amount 10 --identity alice
+
+  dfx_new
+  # setup done
+
+  dfx identity use alice
+  assert_command dfx canister create --all
+
+  # delete by name
+  assert_command dfx canister stop --all
+  assert_command dfx canister delete e2e_project_backend
+  assert_contains "Successfully withdrew"
+
+  # delete by id
+  assert_command dfx canister create --all
+  CANISTER_ID=$(dfx canister id e2e_project_backend)
+  rm .dfx/local/canister_ids.json
+  assert_command dfx canister stop "${CANISTER_ID}"
+  assert_command dfx canister delete "${CANISTER_ID}"
+  assert_contains "Successfully withdrew"
+}
+
+@test "redeem-faucet-coupon redeems into the cycles ledger" {
+  dfx_start --system-canisters
+
+  dfx_new hello
+  install_asset faucet
+  dfx deploy
+  dfx ledger fabricate-cycles --canister faucet --t 1000
+
+  dfx identity new --storage-mode plaintext no_wallet_identity
+  dfx identity use no_wallet_identity
+  SUBACCOUNT="7C7B7A030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
+  assert_command dfx cycles balance
+  assert_eq "0.000 TC (trillion cycles)."
+  assert_command dfx cycles balance --subaccount "$SUBACCOUNT"
+  assert_eq "0.000 TC (trillion cycles)."
+
+  assert_command dfx cycles redeem-faucet-coupon --faucet "$(dfx canister id faucet)" 'valid-coupon'
+  assert_match "Redeemed coupon 'valid-coupon'"
+  assert_command dfx cycles redeem-faucet-coupon --faucet "$(dfx canister id faucet)" 'another-valid-coupon'
+  assert_match "Redeemed coupon 'another-valid-coupon'"
+  assert_command dfx cycles balance
+  assert_eq "20.000 TC (trillion cycles)."
+
+  # with subaccount
+  assert_command dfx cycles redeem-faucet-coupon --faucet "$(dfx canister id faucet)" 'another-valid-coupon' --to-subaccount "$SUBACCOUNT"
+  assert_match "Redeemed coupon 'another-valid-coupon'"
+  assert_command dfx cycles balance --subaccount "$SUBACCOUNT"
+  assert_eq "10.000 TC (trillion cycles)."
+}
+
+@test "create canister on specific subnet" {
+  dfx_start --system-canisters
+
+  ALICE=$(dfx identity get-principal --identity alice)
+  # Get some ICP in Alice's account
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 100 "$(dfx ledger account-id --of-principal "$ALICE")"
+  # Get some cycles (converted from ICP) in Alice's account
+  assert_command dfx cycles convert --amount 10 --identity alice
+
+  dfx_new 
+
+  dfx identity use alice
+  # shellcheck disable=SC2030,SC2031
+  export DFX_DISABLE_AUTO_WALLET=1
+  # setup done
+
+  # use --subnet <principal>
+  SUBNET_ID="5kdm2-62fc6-fwnja-hutkz-ycsnm-4z33i-woh43-4cenu-ev7mi-gii6t-4ae" # a random, valid principal
+  assert_command_fail dfx canister create e2e_project_backend --subnet "$SUBNET_ID"
+  assert_contains "Subnet $SUBNET_ID does not exist"
+  
+  # use --subnet-type
+  assert_command_fail dfx canister create e2e_project_backend --subnet-type custom_subnet_type
+  assert_contains "Provided subnet type custom_subnet_type does not exist"
+}
+
+@test "automatically choose subnet" {
+  dfx_start --system-canisters
+
+  REGISTRY="rwlgt-iiaaa-aaaaa-aaaaa-cai"
+  CMC="rkp4c-7iaaa-aaaaa-aaaca-cai"
+
+  ALICE=$(dfx identity get-principal --identity alice)
+  # Get some ICP in Alice's account
+  assert_command dfx --identity anonymous ledger transfer --memo 1234 --amount 1000 "$(dfx ledger account-id --of-principal "$ALICE")"
+  # Get some cycles (converted from ICP) in Alice's account
+  assert_command dfx cycles convert --amount 100 --identity alice
+
+  # shellcheck disable=SC2030,SC2031
+  export DFX_DISABLE_AUTO_WALLET=1
+  dfx identity use alice
+  dfx_new
+
+  # This is the default application subnet ID
+  SUBNET1="$(dfx canister call "$CMC" get_default_subnets --query | sed -n 's/.*principal "\(.*\)" *;.*/\1/p')"
+  echo "Default application subnet: $SUBNET1"
+  # This is the fiduciary subnet ID that was created because of `dfx start --system-canisters`
+  SUBNET2="$(dfx canister call "$CMC" get_subnet_types_to_subnets --query | sed -n 's/.*principal "\(.*\)" *;.*/\1/p')"
+  echo "Fiduciary subnet: $SUBNET2"
+
+  jq '.canisters.one = { "main": "src/e2e_project_backend/main.mo", "type": "motoko" }' dfx.json | sponge dfx.json
+  jq '.canisters.two = { "main": "src/e2e_project_backend/main.mo", "type": "motoko" }' dfx.json | sponge dfx.json
+  assert_command dfx ledger create-canister --amount 10 --subnet "$SUBNET2" "$ALICE"
+  THREE_ID=$(echo "$stdout" | sed '3q;d' | sed 's/Canister created with id: //')
+  echo "Remote canister three: $THREE_ID"
+  # shellcheck disable=SC2086
+  jq '.canisters.three = { "main": "src/e2e_project_backend/main.mo", "type": "motoko", "remote" : { "candid": "", "id": { "local": '$THREE_ID' } } }' dfx.json | sponge dfx.json
+  # setup done
+
+  # no other canisters already exist
+  assert_command dfx canister create e2e_project_backend
+  stop_and_delete e2e_project_backend
+
+  assert_command dfx deploy e2e_project_backend
+  stop_and_delete e2e_project_backend
+
+  # one other canister already exists
+  assert_command dfx canister create one --subnet "$SUBNET1"
+  ONE_ID="$(dfx canister id one)"
+  echo "Canister one: $ONE_ID"
+
+  assert_command dfx canister create e2e_project_backend
+  ID="$(dfx canister id e2e_project_backend)"
+  assert_command dfx canister call "$REGISTRY" get_subnet_for_canister  --query "(record { \"principal\" = opt principal \"$ID\" })"
+  assert_contains "$SUBNET1"
+  stop_and_delete e2e_project_backend
+
+  assert_command dfx deploy e2e_project_backend
+  ID="$(dfx canister id e2e_project_backend)"
+  assert_command dfx canister call "$REGISTRY" get_subnet_for_canister  --query "(record { \"principal\" = opt principal \"$ID\" })"
+  assert_contains "$SUBNET1"
+  stop_and_delete e2e_project_backend
+
+  # multiple other canisters already exist - all on same subnet
+  assert_command dfx canister create two --subnet "$SUBNET1"
+  TWO_ID="$(dfx canister id two)"
+  echo "Canister two: $TWO_ID"
+
+  assert_command dfx canister create e2e_project_backend
+  ID="$(dfx canister id e2e_project_backend)"
+  assert_command dfx canister call "$REGISTRY" get_subnet_for_canister  --query "(record { \"principal\" = opt principal \"$ID\" })"
+  assert_contains "$SUBNET1"
+  stop_and_delete e2e_project_backend
+
+  assert_command dfx deploy e2e_project_backend
+  ID="$(dfx canister id e2e_project_backend)"
+  assert_command dfx canister call "$REGISTRY" get_subnet_for_canister  --query "(record { \"principal\" = opt principal \"$ID\" })"
+  assert_contains "$SUBNET1"
+  stop_and_delete e2e_project_backend
+
+  # multiple other canisters already exist - not all on same subnet
+  stop_and_delete two
+  assert_command dfx canister create two --subnet "$SUBNET2"
+
+  assert_command_fail dfx canister create e2e_project_backend
+  assert_contains "Cannot automatically decide which subnet to target."
+
+  assert_command_fail dfx deploy e2e_project_backend
+  assert_contains "Cannot automatically decide which subnet to target."
+  
+  # still can create if a subnet is specified
+  assert_command dfx canister create e2e_project_backend --subnet "$SUBNET2"
+  ID="$(dfx canister id e2e_project_backend)"
+  assert_command dfx canister call "$REGISTRY" get_subnet_for_canister  --query "(record { \"principal\" = opt principal \"$ID\" })"
+  assert_contains "$SUBNET2"
+  stop_and_delete e2e_project_backend
+
+  assert_command dfx deploy e2e_project_backend --subnet "$SUBNET2"
+  ID="$(dfx canister id e2e_project_backend)"
+  assert_command dfx canister call "$REGISTRY" get_subnet_for_canister  --query "(record { \"principal\" = opt principal \"$ID\" })"
+  assert_contains "$SUBNET2"
+  stop_and_delete e2e_project_backend
+
+  # remote canister exists on different subnet
+  # one, two on SUBNET1, three on SUBNET2
+  stop_and_delete two
+  assert_command dfx canister create two --subnet "$SUBNET1"
+
+  assert_command dfx canister create e2e_project_backend
+  ID="$(dfx canister id e2e_project_backend)"
+  assert_command dfx canister call "$REGISTRY" get_subnet_for_canister  --query "(record { \"principal\" = opt principal \"$ID\" })"
+  assert_contains "$SUBNET1"
+  stop_and_delete e2e_project_backend
+
+  assert_command dfx deploy e2e_project_backend
+  ID="$(dfx canister id e2e_project_backend)"
+  assert_command dfx canister call "$REGISTRY" get_subnet_for_canister  --query "(record { \"principal\" = opt principal \"$ID\" })"
+  assert_contains "$SUBNET1"
+  stop_and_delete e2e_project_backend
+}

@@ -1,0 +1,27 @@
+[
+    {
+        "op": "add",
+        "path": "/devDependencies/@testing-library~1svelte",
+        "value": "^5.2.8"
+    },
+    {
+        "op": "add",
+        "path": "/devDependencies/cross-fetch",
+        "value": "^3.1.6"
+    },
+    {
+        "op": "add",
+        "path": "/devDependencies/jsdom",
+        "value": "^22.1.0"
+    },
+    {
+        "op": "add",
+        "path": "/devDependencies/vitest",
+        "value": "^2.0.5"
+    },
+    {
+        "op": "add",
+        "path": "/scripts/test",
+        "value": "vitest run"
+    }
+]
